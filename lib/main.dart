@@ -276,9 +276,8 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
                                 child: _SurvivorRow(
                                     state: survivors[i],
                                     perkCatalog: perkCatalog,
-                                    timerSize: timerSize,
-                                    perkSize: perkSize,
-                                    horizontalGap: gap,
+                                                                        tileHeight: tileH,
+horizontalGap: gap,
                                 ),
                             ),
                         );
@@ -292,135 +291,161 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
 class _SurvivorRow extends StatelessWidget {
     final SurvivorState state;
     final List<PerkAsset> perkCatalog;
-    final double timerSize;
-    final double perkSize;
+    final double tileHeight;
     final double horizontalGap;
 
     const _SurvivorRow({
         required this.state,
         required this.perkCatalog,
-        required this.timerSize,
-        required this.perkSize,
+        required this.tileHeight,
         required this.horizontalGap,
     });
 
     @override
     Widget build(BuildContext context) {
-        final progress = state.timer.running
-            ? (state.timer.elapsed.clamp(0, state.timer.maxSeconds) / state.timer.maxSeconds)
-            : 0.0;
-        final timeText = _fmt(state.timer.elapsed % (state.timer.maxSeconds + 1));
-        final stroke = (timerSize * 0.09).clamp(4.5, 8.0);
-        final fontSize = (timerSize * 0.23).clamp(13.0, 24.0);
-
         return Card(
             elevation: 1,
             margin: EdgeInsets.zero,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
             child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-                child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                        // 左：タイマー（タップで開始/停止）
-                        SizedBox(
-                            width: timerSize,
-                            height: timerSize,
-                            child: GestureDetector(
-                                onTap: () => _contextOnTimerTap(context, state),
-                                child: Stack(
-                                    alignment: Alignment.center,
-                                    children: [
-                                        CircularProgressIndicator(
-                                            value: progress,
-                                            strokeWidth: stroke,
-                                        ),
-                                        Text(
-                                            timeText,
-                                            style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w700),
-                                        ),
-                                    ],
-                                ),
-                            ),
-                        ),
-                        SizedBox(width: horizontalGap),
-                        // 右：パーク3つ（横一列）＋ 下に釣りカウンタ
-                        Expanded(
-                            child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                    // 上段：パーク
-                                    Row(
-                                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                                        children: perkCatalog.map((p) {
-                                            final selected = p.id == state.selectedPerkId;
-                                            final sat = _contextSaturation(context, state, p.id);
-                                            return GestureDetector(
-                                                onTap: () => _contextOnPerkTap(context, state, p.id),
-                                                onLongPress: () => _contextOnPerkLongPress(context, state, p.id),
-                                                child: Container(
-                                                    padding: const EdgeInsets.all(3),
-                                                    decoration: BoxDecoration(
-                                                        borderRadius: BorderRadius.circular(10),
-                                                        border: Border.all(
-                                                            color: selected
-                                                                ? Theme.of(context).colorScheme.primary
-                                                                : Theme.of(context).colorScheme.outlineVariant,
-                                                            width: selected ? 2 : 1,
-                                                        ),
-                                                    ),
-                                                    child: ColorFiltered(
-                                                        colorFilter: ColorFilter.matrix(_saturationMatrix(sat)),
-                                                        child: SizedBox(
-                                                            width: perkSize,
-                                                            height: perkSize,
-                                                            child: Image.asset(
-                                                                p.path,
-                                                                fit: BoxFit.contain,
-                                                                errorBuilder: (ctx, err, st) => Container(
-                                                                    alignment: Alignment.center,
-                                                                    color: Colors.black12,
-                                                                    child: const Text('Set image', style: TextStyle(fontSize: 10)),
-                                                                ),
-                                                            ),
-                                                        ),
-                                                    ),
+                child: LayoutBuilder(
+                    builder: (context, box) {
+                        // ---- 横幅に応じた自動スケール（比率固定） ----
+                        final availW = box.maxWidth;
+                        // タイマー:パークの相対比（パーク=タイマーの約0.58倍）
+                        const ratioPerkToTimer = 0.58;
+                        // 行高に基づく基準サイズ
+                        final timerBase = (tileHeight * 0.72).clamp(52.0, 112.0);
+                        final perkBase  = timerBase * ratioPerkToTimer;
+                        // パディング/枠の概算
+                        const iconGap = 6.0;       // パーク間の隙間（×2発生）
+                        const perIconExtra = 8.0;  // パーク枠内のpadding+border概算
+                        final requiredW = timerBase
+                            + horizontalGap
+                            + 3 * (perkBase + perIconExtra)
+                            + 2 * iconGap;
+
+                        final scale = (availW / requiredW).clamp(0.6, 1.0);
+                        final timerSize = timerBase * scale;
+                        final perkSize  = perkBase  * scale;
+
+                        // 表示用
+                        final progress = state.timer.running
+                            ? (state.timer.elapsed.clamp(0, state.timer.maxSeconds) / state.timer.maxSeconds)
+                            : 0.0;
+                        final timeText = _fmt(state.timer.elapsed % (state.timer.maxSeconds + 1));
+                        final stroke   = (timerSize * 0.09).clamp(4.5, 8.0);
+                        final fontSize = (timerSize * 0.23).clamp(13.0, 24.0);
+
+                        return Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                                // 左: タイマー（タップで開始/停止）
+                                SizedBox(
+                                    width: timerSize,
+                                    height: timerSize,
+                                    child: GestureDetector(
+                                        onTap: () => _contextOnTimerTap(context, state),
+                                        child: Stack(
+                                            alignment: Alignment.center,
+                                            children: [
+                                                CircularProgressIndicator(
+                                                    value: progress,
+                                                    strokeWidth: stroke,
                                                 ),
-                                            );
-                                        }).toList(),
+                                                Text(
+                                                    timeText,
+                                                    style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w700),
+                                                ),
+                                            ],
+                                        ),
                                     ),
-                                    const SizedBox(height: 4),
-                                    // 下段：釣りカウンタ（中央寄せ）
-                                    Row(
+                                ),
+                                SizedBox(width: horizontalGap),
+                                // 右: パーク3つ + 下に釣りカウンタ
+                                Expanded(
+                                    child: Column(
                                         mainAxisAlignment: MainAxisAlignment.center,
+                                        crossAxisAlignment: CrossAxisAlignment.stretch,
                                         children: [
-                                            _miniIconButton(
-                                                context,
-                                                icon: Icons.remove,
-                                                onPressed: () => _contextIncHook(context, state, -1),
-                                                enabled: state.hookCount > 0,
+                                            Row(
+                                                mainAxisAlignment: MainAxisAlignment.center,
+                                                mainAxisSize: MainAxisSize.max,
+                                                children: [
+                                                    for (int idx = 0; idx < perkCatalog.length; idx++) ...[
+                                                        _perkIcon(context, perkCatalog[idx], perkSize),
+                                                        if (idx < perkCatalog.length - 1) const SizedBox(width: iconGap),
+                                                    ],
+                                                ],
                                             ),
-                                            Container(
-                                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                                                decoration: BoxDecoration(
-                                                    color: Theme.of(context).colorScheme.surfaceVariant,
-                                                    borderRadius: BorderRadius.circular(6),
-                                                ),
-                                                child: Text('${state.hookCount}/3', style: const TextStyle(fontWeight: FontWeight.w600)),
-                                            ),
-                                            _miniIconButton(
-                                                context,
-                                                icon: Icons.add,
-                                                onPressed: () => _contextIncHook(context, state, 1),
-                                                enabled: state.hookCount < 3,
+                                            const SizedBox(height: 4),
+                                            Row(
+                                                mainAxisAlignment: MainAxisAlignment.center,
+                                                children: [
+                                                    _miniIconButton(
+                                                        context,
+                                                        icon: Icons.remove,
+                                                        onPressed: () => _contextIncHook(context, state, -1),
+                                                        enabled: state.hookCount > 0,
+                                                    ),
+                                                    Container(
+                                                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                                        decoration: BoxDecoration(
+                                                            color: Theme.of(context).colorScheme.surfaceVariant,
+                                                            borderRadius: BorderRadius.circular(6),
+                                                        ),
+                                                        child: Text('${state.hookCount}/3', style: const TextStyle(fontWeight: FontWeight.w600)),
+                                                    ),
+                                                    _miniIconButton(
+                                                        context,
+                                                        icon: Icons.add,
+                                                        onPressed: () => _contextIncHook(context, state, 1),
+                                                        enabled: state.hookCount < 3,
+                                                    ),
+                                                ],
                                             ),
                                         ],
                                     ),
-                                ],
+                                ),
+                            ],
+                        );
+                    },
+                ),
+            ),
+        );
+    }
+
+    Widget _perkIcon(BuildContext context, PerkAsset p, double perkSize) {
+        final selected = p.id == state.selectedPerkId;
+        final sat = _contextSaturation(context, state, p.id);
+        return GestureDetector(
+            onTap: () => _contextOnPerkTap(context, state, p.id),
+            onLongPress: () => _contextOnPerkLongPress(context, state, p.id),
+            child: Container(
+                padding: const EdgeInsets.all(3),
+                decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                        color: selected ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.outlineVariant,
+                        width: selected ? 2 : 1,
+                    ),
+                ),
+                child: ColorFiltered(
+                    colorFilter: ColorFilter.matrix(_saturationMatrix(sat)),
+                    child: SizedBox(
+                        width: perkSize,
+                        height: perkSize,
+                        child: Image.asset(
+                            p.path,
+                            fit: BoxFit.contain,
+                            errorBuilder: (ctx, err, st) => Container(
+                                alignment: Alignment.center,
+                                color: Colors.black12,
+                                child: const Text('Set image', style: TextStyle(fontSize: 10)),
                             ),
                         ),
-                    ],
+                    ),
                 ),
             ),
         );
