@@ -19,7 +19,7 @@ class SingleCounterTimer {
     bool _notified60 = false;
     bool _notified80 = false;
 
-    SingleCounterTimer({this.maxSeconds = 80, this.notifyAt = const [60, 80]});
+    SingleCounterTimer({this.maxSeconds = 99*60+59, this.notifyAt = const [60, 80]});
 
     void startFromZero() {
         running = true;
@@ -43,18 +43,13 @@ class SingleCounterTimer {
         final now = DateTime.now();
         elapsed = now.difference(_startedAt!).inSeconds;
 
-        if (!_notified60 && notifyAt.contains(60) && elapsed >= 60 && elapsed < maxSeconds) {
+        if (!_notified60 && notifyAt.contains(60) && elapsed >= 60) {
             _notified60 = true;
             onNotify60();
         }
         if (!_notified80 && notifyAt.contains(80) && elapsed >= 80) {
             _notified80 = true;
             onNotify80();
-            // 自動リセット
-            stopAndReset();
-        }
-        if (elapsed > maxSeconds) {
-            stopAndReset();
         }
     }
 }
@@ -90,12 +85,23 @@ class PerkAsset {
     const PerkAsset(this.id, this.label, this.path);
 }
 
+
+enum PerkState { unknown, ready, inactive, spent }
+
 class SurvivorState {
     final SingleCounterTimer timer = SingleCounterTimer();
-    String selectedPerkId = 'ds';
-    final Map<String, bool> desaturated = {'ds': false, 'otr': false, 'dh': false};
+    // Perk state machine per perk id
+    final Map<String, PerkState> perkStates = {
+        'ds': PerkState.unknown,
+        'otr': PerkState.unknown,
+        'dh': PerkState.unknown,
+    };
+
+    // Previous elapsed seconds to detect 60s/80s crossings
+    int _prevElapsed = 0;
 
     int hookCount = 0; // 0..3 の範囲
+    bool isHooked = false;
 }
 
 List<double> _saturationMatrix(double s) {
@@ -136,8 +142,27 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
         // 全タイマーを定期再計算。
         ticker = Timer.periodic(const Duration(milliseconds: 250), (_) {
             for (final s in survivors) {
+            final prev = s._prevElapsed;
                 s.timer.recompute(onNotify60: _notifyAt60, onNotify80: _notifyAt80);
+            final cur = s.timer.elapsed;
+
+            // 60s crossing
+            if (prev < 60 && cur >= 60) {
+                // DS expires -> spent; DH cooldown -> ready
+                if ((s.perkStates['ds'] ?? PerkState.unknown) == PerkState.ready) {
+                    s.perkStates['ds'] = PerkState.spent;
+                }
             }
+            // 80s crossing
+            if (prev < 79 && cur >= 79) {
+                // OTR expires -> spent
+                if ((s.perkStates['otr'] ?? PerkState.unknown) == PerkState.ready) {
+                    s.perkStates['otr'] = PerkState.spent;
+                }
+            }
+            s._prevElapsed = cur;
+        }
+
             gameTimer.recompute();
             if (mounted) setState(() {});
         });
@@ -165,10 +190,11 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
     void _onStartPressed() {
         setState(() {
             for (final s in survivors) {
-                s.timer.stopAndReset();
+                s.timer.startFromZero();
                 s.hookCount = 0;
-                s.selectedPerkId = 'ds';
-                s.desaturated.updateAll((_, __) => false);
+                for (final id in ['ds','otr','dh']) {
+                    s.perkStates[id] = PerkState.unknown;
+                }
             }
             gameTimer.startFromZero();
             HapticFeedback.lightImpact();
@@ -176,14 +202,26 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
     }
 
     // タイマー自体をタップして開始/停止。開始時に hookCount を自動で +1（最大3）。
-    void _onTimerTap(SurvivorState s) {
+    void _onHookTap(SurvivorState s) {
         setState(() {
-            if (!s.timer.running) {
-                s.hookCount = (s.hookCount + 1).clamp(0, 3);
+            if (!s.isHooked) {
+                // Become hooked now
                 s.timer.startFromZero();
+                s.hookCount = (s.hookCount + 1).clamp(0, 3);
             } else {
-                s.timer.stopAndReset();
+                // Unhooked now
+                s.timer.startFromZero();
+                // UNHOOK event transitions -> ready (for DS/OTR); DH also ready
+                for (final id in ['ds','otr','dh']) {
+                    if (s.perkStates[id] == PerkState.spent) {
+                        continue;
+                    }
+                    s.perkStates[id] = PerkState.ready;
+                }
             }
+            s.isHooked = !s.isHooked;
+            // reset time crossing tracking
+            s._prevElapsed = 0;
         });
     }
 
@@ -195,19 +233,42 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
     }
 
     void _onPerkTap(SurvivorState s, String id) {
-        // タイマーは開始しない。選択や彩度だけ扱う。
+        // Single tap: "use" if the perk requires activation (e.g., DS/DH).
         setState(() {
-            s.selectedPerkId = id;
+            final st = s.perkStates[id] ?? PerkState.unknown;
+            switch (id) {
+                case 'dh':
+                    if (st == PerkState.ready) {
+                        s.perkStates[id] = PerkState.inactive;
+                    }
+                    break;
+                case 'ds': // Decisive Strike:
+                case 'otr': // Off The Record:
+                    if (st == PerkState.ready) {
+                        s.perkStates[id] = PerkState.inactive;
+                    }
+                    break;
+                default:
+                    break;
+            }
         });
     }
 
-    void _onPerkLongPress(SurvivorState s, String id) {
-        setState(() => s.desaturated[id] = !(s.desaturated[id] ?? false));
+    void _onPerkDoubleTap(SurvivorState s, String id) {
+        // Double tap: toggle Ready <-> spent (manual override/disable)
+        setState(() {
+            final st = s.perkStates[id] ?? PerkState.unknown;
+            if (st == PerkState.spent) {
+                s.perkStates[id] = PerkState.ready;
+            } else {
+                s.perkStates[id] = PerkState.spent;
+            }
+        });
     }
 
     double _saturationFor(SurvivorState s, String id) {
-        if (s.desaturated[id] == true) return 0.0;
-        return id == s.selectedPerkId ? 1.0 : 0.35;
+        if (s.perkStates[id] == PerkState.ready) return 1.0;
+        return 0.3;
     }
 
     @override
@@ -276,8 +337,8 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
                                 child: _SurvivorRow(
                                     state: survivors[i],
                                     perkCatalog: perkCatalog,
-                                                                        tileHeight: tileH,
-horizontalGap: gap,
+                                    tileHeight: tileH,
+                                    horizontalGap: gap,
                                 ),
                             ),
                         );
@@ -304,6 +365,7 @@ class _SurvivorRow extends StatelessWidget {
     @override
     Widget build(BuildContext context) {
         return Card(
+            color: state.isHooked ? Colors.yellow : null,
             elevation: 1,
             margin: EdgeInsets.zero,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
@@ -315,7 +377,8 @@ class _SurvivorRow extends StatelessWidget {
                         final availW = box.maxWidth;
 
                         // Make timer relatively smaller: increase perk/timer ratio a bit
-                        const ratioPerkToTimer = 0.66; // was 0.58
+                        const ratioPerkToTimer = 0.66;
+                        const ratioHookButtonToTimer = 0.33;
 
                         // Vertical layout constants (match list builder assumptions)
                         const hookRowH = 24.0;
@@ -345,51 +408,66 @@ class _SurvivorRow extends StatelessWidget {
                         }
                         // Enforce sensible bounds
                         timerSize = timerSize.clamp(36.0, 120.0);
+                        final hookButtonSize  = (timerSize * ratioPerkToTimer).clamp(24.0, 96.0);
                         final perkSize  = (timerSize * ratioPerkToTimer).clamp(24.0, 96.0);
 
                         // Rendering parameters
                         final progress = state.timer.running
-                            ? (state.timer.elapsed.clamp(0, state.timer.maxSeconds) / state.timer.maxSeconds)
+                            ? (state.timer.elapsed.clamp(0, 80) / 80)
                             : 0.0;
                         final timeText = _fmt(state.timer.elapsed % (state.timer.maxSeconds + 1));
                         final stroke   = (timerSize * 0.09).clamp(4.0, 8.0);
                         final fontSize = (timerSize * 0.23).clamp(12.0, 24.0);
 
                         return Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                                // 左：タイマー（タップで開始/停止）
-                                SizedBox(
-                                    width: timerSize,
-                                    height: timerSize,
-                                    child: GestureDetector(
-                                        onTap: () => _contextOnTimerTap(context, state),
-                                        child: Stack(
-                                            alignment: Alignment.center,
-                                            children: [
-                                                CircularProgressIndicator(
-                                                    value: progress,
-                                                    strokeWidth: stroke,
+                                    Column(
+                                        mainAxisAlignment: MainAxisAlignment.start,
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                            // 左上：タイマー（タップで開始/停止）
+                                            SizedBox(
+                                                width: timerSize,
+                                                height: timerSize,
+                                                child: Stack(
+                                                    alignment: Alignment.center,
+                                                    children: [
+                                                        CircularProgressIndicator(
+                                                            value: progress,
+                                                            strokeWidth: stroke,
+                                                        ),
+                                                        Text(
+                                                            timeText,
+                                                            style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w700),
+                                                        ),
+                                                    ],
                                                 ),
-                                                Text(
-                                                    timeText,
-                                                    style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w700),
+                                            ),
+                                            // 左下：hook ボタン
+                                            SizedBox(
+                                                width: timerSize,
+                                                child: Center(
+                                                    child: FilledButton(
+                                                        onPressed: () => _contextOnHookTap(context, state),
+                                                        style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), minimumSize: const Size(0, 40)),
+                                                        child: Text(state.isHooked ? 'unhook' : 'hook', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                                                    ),
                                                 ),
-                                            ],
-                                        ),
+                                            ),
+                                        ],
                                     ),
-                                ),
-                                SizedBox(width: horizontalGap),
+                                //SizedBox(width: horizontalGap),
                                 // 右：パーク3つ（横一列）＋ 下に釣りカウンタ
                                 Expanded(
                                     child: Column(
-                                        mainAxisAlignment: MainAxisAlignment.center,
-                                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                                        mainAxisAlignment: MainAxisAlignment.start,
+                                        crossAxisAlignment: CrossAxisAlignment.center,
                                         children: [
                                             // 上段：パーク
                                             Row(
                                                 mainAxisAlignment: MainAxisAlignment.center,
-                                                mainAxisSize: MainAxisSize.max,
+                                                //mainAxisSize: MainAxisSize.max,
                                                 children: [
                                                     for (int idx = 0; idx < perkCatalog.length; idx++) ...[
                                                         _perkIcon(context, perkCatalog[idx], perkSize),
@@ -429,25 +507,38 @@ class _SurvivorRow extends StatelessWidget {
                                 ),
                             ],
                         );
-},
+                    },
                 ),
             ),
         );
     }
 
     Widget _perkIcon(BuildContext context, PerkAsset p, double perkSize) {
-        final selected = p.id == state.selectedPerkId;
+        final isThisPerkReady = (state.perkStates[p.id] == PerkState.ready);
         final sat = _contextSaturation(context, state, p.id);
+        String? perkStateOverlayAsset(PerkState s, String perkId) {
+        // 画像は /assets/perks/status/ 配下に配置される想定
+        // 例: unknown.png / spent.png （Perk別に用意する場合は perkId を使って分岐）
+            switch (s) {
+                case PerkState.unknown:
+                    return 'assets/perks/status/unknown.png';
+                case PerkState.spent:
+                    return 'assets/perks/status/spent.png';
+                default:
+                    return null;
+            }
+        }
+
         return GestureDetector(
             onTap: () => _contextOnPerkTap(context, state, p.id),
-            onLongPress: () => _contextOnPerkLongPress(context, state, p.id),
+            onDoubleTap: () => _contextOnPerkDoubleTap(context, state, p.id),
             child: Container(
                 padding: const EdgeInsets.all(3),
                 decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(10),
                     border: Border.all(
-                        color: selected ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.outlineVariant,
-                        width: selected ? 2 : 1,
+                        color: isThisPerkReady ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.outlineVariant,
+                        width: isThisPerkReady ? 2 : 1,
                     ),
                 ),
                 child: ColorFiltered(
@@ -455,17 +546,44 @@ class _SurvivorRow extends StatelessWidget {
                     child: SizedBox(
                         width: perkSize,
                         height: perkSize,
-                        child: Image.asset(
-                            p.path,
-                            fit: BoxFit.contain,
-                            errorBuilder: (ctx, err, st) => Container(
-                                alignment: Alignment.center,
-                                color: Colors.black12,
-                                child: const Text('Set image', style: TextStyle(fontSize: 10)),
-                            ),
+                        child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                                // Base perk image
+                                Image.asset(
+                                    p.path,
+                                    fit: BoxFit.contain,
+                                    errorBuilder: (ctx, err, st) => Container(
+                                        alignment: Alignment.center,
+                                        color: Colors.black12,
+                                        child: const Text('Set image', style: TextStyle(fontSize: 10)),
+                                    ),
+                                ),
+                                // Status overlay (unknown/spent)
+                                Builder(
+                                    builder: (ctx) {
+                                        final st = state.perkStates[p.id] ?? PerkState.unknown;
+                                        final overlay = perkStateOverlayAsset(st, p.id);
+                                        if (overlay == null) return const SizedBox.shrink();
+                                        return IgnorePointer(
+                                            ignoring: true,
+                                            child: Center(
+                                                child: Image.asset(
+                                                    overlay,
+                                                    fit: BoxFit.contain,
+                                                    width: perkSize * 0.9,
+                                                    height: perkSize * 0.9,
+                                                    errorBuilder: (ctx, err, st) => const SizedBox.shrink(),
+                                                ),
+                                            ),
+                                        );
+                                    },
+                                ),
+                            ],
                         ),
                     ),
                 ),
+
             ),
         );
     }
@@ -497,14 +615,14 @@ class _SurvivorRow extends StatelessWidget {
         state!._onPerkTap(s, id);
     }
 
-    void _contextOnPerkLongPress(BuildContext ctx, SurvivorState s, String id) {
+    void _contextOnPerkDoubleTap(BuildContext ctx, SurvivorState s, String id) {
         final state = ctx.findAncestorStateOfType<_DbDKillerHelperAppState>();
-        state!._onPerkLongPress(s, id);
+        state!._onPerkDoubleTap(s, id);
     }
 
-    void _contextOnTimerTap(BuildContext ctx, SurvivorState s) {
+    void _contextOnHookTap(BuildContext ctx, SurvivorState s) {
         final state = ctx.findAncestorStateOfType<_DbDKillerHelperAppState>();
-        state!._onTimerTap(s);
+        state!._onHookTap(s);
     }
 
     void _contextIncHook(BuildContext ctx, SurvivorState s, int delta) {
