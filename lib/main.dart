@@ -165,7 +165,7 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
             ),
             home: Scaffold(
                 appBar: AppBar(
-                    title: const Text('キラー用：縦リスト / 各行は横並び（自動スケール）'),
+                    title: const Text('キラー用：縦リスト / 各行は横並び（オーバーフロー対策）'),
                     actions: [
                         IconButton(
                             tooltip: '全てリセット',
@@ -189,13 +189,10 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
                         final totalVSpacing = vSpacing * (rows - 1);
                         final tileH = ((maxH - totalVSpacing) / rows).clamp(72.0, 220.0);
 
-                        // 行内レイアウト計算
-                        final timerSize = (tileH * 0.9).clamp(64.0, 140.0);
-                        final gap = 12.0;
-                        final rightW = (maxW - timerSize - gap - 24).clamp(120.0, maxW);
-                        final perkSize = (
-                            ((rightW - (gap * 2)) / 3)
-                        ).clamp(40.0, tileH * 0.7);
+                        // 行内の基準サイズ（以前より小さめ）
+                        final timerSize = (tileH * 0.75).clamp(56.0, 120.0);
+                        final perkSize = (tileH * 0.42).clamp(36.0, 72.0);
+                        final gap = 8.0; // タイマーとパークの間
 
                         // 4行が収まるならスクロール無し、難しければスクロール可
                         final contentH = tileH * rows + totalVSpacing;
@@ -244,8 +241,8 @@ class _SurvivorRow extends StatelessWidget {
             ? (state.timer.elapsed.clamp(0, state.timer.maxSeconds) / state.timer.maxSeconds)
             : 0.0;
         final timeText = _fmt(state.timer.elapsed % (state.timer.maxSeconds + 1));
-        final stroke = (timerSize * 0.09).clamp(6.0, 10.0);
-        final fontSize = (timerSize * 0.23).clamp(16.0, 28.0);
+        final stroke = (timerSize * 0.09).clamp(5.0, 9.0);
+        final fontSize = (timerSize * 0.23).clamp(14.0, 26.0);
 
         return Card(
             elevation: 2,
@@ -255,77 +252,92 @@ class _SurvivorRow extends StatelessWidget {
                 child: Row(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                        // 左：コンパクトタイマー（円＋時間）
-                        SizedBox(
-                            width: timerSize,
-                            height: timerSize,
-                            child: Stack(
-                                alignment: Alignment.center,
-                                children: [
-                                    CircularProgressIndicator(
-                                        value: progress,
-                                        strokeWidth: stroke,
+                        // 左：タイマー（必要に応じて縮小して収める）
+                        Flexible(
+                            flex: 4,
+                            child: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerLeft,
+                                child: SizedBox(
+                                    width: timerSize,
+                                    height: timerSize,
+                                    child: Stack(
+                                        alignment: Alignment.center,
+                                        children: [
+                                            CircularProgressIndicator(
+                                                value: progress,
+                                                strokeWidth: stroke,
+                                            ),
+                                            Text(
+                                                timeText,
+                                                style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w700),
+                                            ),
+                                            Positioned(
+                                                right: 0,
+                                                top: 0,
+                                                child: IconButton(
+                                                    tooltip: 'このサバイバーをリセット',
+                                                    icon: const Icon(Icons.stop_circle_outlined, size: 18),
+                                                    onPressed: () {
+                                                        state.timer.stopAndReset();
+                                                    },
+                                                ),
+                                            ),
+                                        ],
                                     ),
-                                    Text(
-                                        timeText,
-                                        style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w700),
-                                    ),
-                                    Positioned(
-                                        right: -4,
-                                        top: -4,
-                                        child: IconButton(
-                                            tooltip: 'このサバイバーをリセット',
-                                            icon: const Icon(Icons.stop_circle_outlined, size: 20),
-                                            onPressed: () {
-                                                state.timer.stopAndReset();
-                                            },
-                                        ),
-                                    ),
-                                ],
+                                ),
                             ),
                         ),
                         SizedBox(width: horizontalGap),
-                        // 右：パーク画像3つを横並び
-                        Expanded(
-                            child: Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                                children: perkCatalog.map((p) {
-                                    final sat = _contextSaturation(context, state, p.id);
-                                    final selected = p.id == state.selectedPerkId;
-                                    return GestureDetector(
-                                        onTap: () => _contextOnTap(context, state, p.id),
-                                        onLongPress: () => _contextOnLongPress(context, state, p.id),
-                                        child: AnimatedContainer(
-                                            duration: const Duration(milliseconds: 120),
-                                            padding: const EdgeInsets.all(4),
-                                            decoration: BoxDecoration(
-                                                borderRadius: BorderRadius.circular(12),
-                                                border: Border.all(
-                                                    color: selected
-                                                        ? Theme.of(context).colorScheme.primary
-                                                        : Theme.of(context).colorScheme.outlineVariant,
-                                                    width: selected ? 2 : 1,
-                                                ),
-                                            ),
-                                            child: ColorFiltered(
-                                                colorFilter: ColorFilter.matrix(_saturationMatrix(sat)),
-                                                child: SizedBox(
-                                                    width: perkSize,
-                                                    height: perkSize,
-                                                    child: Image.asset(
-                                                        p.path,
-                                                        fit: BoxFit.contain,
-                                                        errorBuilder: (ctx, err, st) => Container(
-                                                            alignment: Alignment.center,
-                                                            color: Colors.black12,
-                                                            child: const Text('Set image', style: TextStyle(fontSize: 10)),
+                        // 右：パーク画像3つを横並び（不足時は自動縮小して収める）
+                        Flexible(
+                            flex: 6,
+                            child: FittedBox(
+                                fit: BoxFit.scaleDown,
+                                alignment: Alignment.centerLeft,
+                                child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: perkCatalog.map((p) {
+                                        final sat = _contextSaturation(context, state, p.id);
+                                        final selected = p.id == state.selectedPerkId;
+                                        return Padding(
+                                            padding: const EdgeInsets.symmetric(horizontal: 4),
+                                            child: GestureDetector(
+                                                onTap: () => _contextOnTap(context, state, p.id),
+                                                onLongPress: () => _contextOnLongPress(context, state, p.id),
+                                                child: AnimatedContainer(
+                                                    duration: const Duration(milliseconds: 120),
+                                                    padding: const EdgeInsets.all(4),
+                                                    decoration: BoxDecoration(
+                                                        borderRadius: BorderRadius.circular(12),
+                                                        border: Border.all(
+                                                            color: selected
+                                                                ? Theme.of(context).colorScheme.primary
+                                                                : Theme.of(context).colorScheme.outlineVariant,
+                                                            width: selected ? 2 : 1,
+                                                        ),
+                                                    ),
+                                                    child: ColorFiltered(
+                                                        colorFilter: ColorFilter.matrix(_saturationMatrix(sat)),
+                                                        child: SizedBox(
+                                                            width: perkSize,
+                                                            height: perkSize,
+                                                            child: Image.asset(
+                                                                p.path,
+                                                                fit: BoxFit.contain,
+                                                                errorBuilder: (ctx, err, st) => Container(
+                                                                    alignment: Alignment.center,
+                                                                    color: Colors.black12,
+                                                                    child: const Text('Set image', style: TextStyle(fontSize: 10)),
+                                                                ),
+                                                            ),
                                                         ),
                                                     ),
                                                 ),
                                             ),
-                                        ),
-                                    );
-                                }).toList(),
+                                        );
+                                    }).toList(),
+                                ),
                             ),
                         ),
                     ],
@@ -334,7 +346,7 @@ class _SurvivorRow extends StatelessWidget {
         );
     }
 
-    // 以下はコンテキスト経由で親Stateの関数にアクセスする簡易ヘルパ
+    // 親Stateの関数にアクセスする簡易ヘルパ
     double _contextSaturation(BuildContext ctx, SurvivorState s, String id) {
         final state = ctx.findAncestorStateOfType<_DbDKillerHelperAppState>();
         return state!._saturationFor(s, id);
