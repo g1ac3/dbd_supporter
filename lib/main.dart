@@ -150,14 +150,14 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
             if (prev < 60 && cur >= 60) {
                 // DS expires -> spent; DH cooldown -> ready
                 if ((s.perkStates['ds'] ?? PerkState.unknown) == PerkState.ready) {
-                    s.perkStates['ds'] = PerkState.spent;
+                    s.perkStates['ds'] = PerkState.unknown;
                 }
             }
             // 80s crossing
             if (prev < 79 && cur >= 79) {
                 // OTR expires -> spent
                 if ((s.perkStates['otr'] ?? PerkState.unknown) == PerkState.ready) {
-                    s.perkStates['otr'] = PerkState.spent;
+                    s.perkStates['otr'] = PerkState.unknown;
                 }
             }
             s._prevElapsed = cur;
