@@ -96,6 +96,7 @@ class SurvivorState {
     final Map<String, bool> desaturated = {'ds': false, 'otr': false, 'dh': false};
 
     int hookCount = 0; // 0..3 の範囲
+    bool isHooked = false;
 }
 
 List<double> _saturationMatrix(double s) {
@@ -176,14 +177,15 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
     }
 
     // タイマー自体をタップして開始/停止。開始時に hookCount を自動で +1（最大3）。
-    void _onTimerTap(SurvivorState s) {
+    void _onHookTap(SurvivorState s) {
         setState(() {
-            if (!s.timer.running) {
-                s.hookCount = (s.hookCount + 1).clamp(0, 3);
-                s.timer.startFromZero();
-            } else {
+            if (!s.isHooked) {
                 s.timer.stopAndReset();
+                s.hookCount = (s.hookCount + 1).clamp(0, 3);
+            } else {
+                s.timer.startFromZero();
             }
+            s.isHooked = !s.isHooked;
         });
     }
 
@@ -276,8 +278,8 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
                                 child: _SurvivorRow(
                                     state: survivors[i],
                                     perkCatalog: perkCatalog,
-                                                                        tileHeight: tileH,
-horizontalGap: gap,
+                                    tileHeight: tileH,
+                                    horizontalGap: gap,
                                 ),
                             ),
                         );
@@ -304,6 +306,7 @@ class _SurvivorRow extends StatelessWidget {
     @override
     Widget build(BuildContext context) {
         return Card(
+            color: state.isHooked ? Colors.yellow : null,
             elevation: 1,
             margin: EdgeInsets.zero,
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
@@ -315,7 +318,8 @@ class _SurvivorRow extends StatelessWidget {
                         final availW = box.maxWidth;
 
                         // Make timer relatively smaller: increase perk/timer ratio a bit
-                        const ratioPerkToTimer = 0.66; // was 0.58
+                        const ratioPerkToTimer = 0.66;
+                        const ratioHookButtonToTimer = 0.33;
 
                         // Vertical layout constants (match list builder assumptions)
                         const hookRowH = 24.0;
@@ -345,6 +349,7 @@ class _SurvivorRow extends StatelessWidget {
                         }
                         // Enforce sensible bounds
                         timerSize = timerSize.clamp(36.0, 120.0);
+                        final hookButtonSize  = (timerSize * ratioPerkToTimer).clamp(24.0, 96.0);
                         final perkSize  = (timerSize * ratioPerkToTimer).clamp(24.0, 96.0);
 
                         // Rendering parameters
@@ -356,40 +361,54 @@ class _SurvivorRow extends StatelessWidget {
                         final fontSize = (timerSize * 0.23).clamp(12.0, 24.0);
 
                         return Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                                // 左：タイマー（タップで開始/停止）
-                                SizedBox(
-                                    width: timerSize,
-                                    height: timerSize,
-                                    child: GestureDetector(
-                                        onTap: () => _contextOnTimerTap(context, state),
-                                        child: Stack(
-                                            alignment: Alignment.center,
-                                            children: [
-                                                CircularProgressIndicator(
-                                                    value: progress,
-                                                    strokeWidth: stroke,
+                                    Column(
+                                        mainAxisAlignment: MainAxisAlignment.start,
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                            // 左上：タイマー（タップで開始/停止）
+                                            SizedBox(
+                                                width: timerSize,
+                                                height: timerSize,
+                                                child: Stack(
+                                                    alignment: Alignment.center,
+                                                    children: [
+                                                        CircularProgressIndicator(
+                                                            value: progress,
+                                                            strokeWidth: stroke,
+                                                        ),
+                                                        Text(
+                                                            timeText,
+                                                            style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w700),
+                                                        ),
+                                                    ],
                                                 ),
-                                                Text(
-                                                    timeText,
-                                                    style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w700),
+                                            ),
+                                            // 左下：hook ボタン
+                                            SizedBox(
+                                                width: timerSize,
+                                                child: Center(
+                                                    child: FilledButton(
+                                                        onPressed: () => _contextOnHookTap(context, state),
+                                                        style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), minimumSize: const Size(0, 40)),
+                                                        child: Text(state.isHooked ? 'unhook' : 'hook', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                                                    ),
                                                 ),
-                                            ],
-                                        ),
+                                            ),
+                                        ],
                                     ),
-                                ),
-                                SizedBox(width: horizontalGap),
+                                //SizedBox(width: horizontalGap),
                                 // 右：パーク3つ（横一列）＋ 下に釣りカウンタ
                                 Expanded(
                                     child: Column(
-                                        mainAxisAlignment: MainAxisAlignment.center,
-                                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                                        mainAxisAlignment: MainAxisAlignment.start,
+                                        crossAxisAlignment: CrossAxisAlignment.center,
                                         children: [
                                             // 上段：パーク
                                             Row(
                                                 mainAxisAlignment: MainAxisAlignment.center,
-                                                mainAxisSize: MainAxisSize.max,
+                                                //mainAxisSize: MainAxisSize.max,
                                                 children: [
                                                     for (int idx = 0; idx < perkCatalog.length; idx++) ...[
                                                         _perkIcon(context, perkCatalog[idx], perkSize),
@@ -429,7 +448,7 @@ class _SurvivorRow extends StatelessWidget {
                                 ),
                             ],
                         );
-},
+                    },
                 ),
             ),
         );
@@ -502,9 +521,9 @@ class _SurvivorRow extends StatelessWidget {
         state!._onPerkLongPress(s, id);
     }
 
-    void _contextOnTimerTap(BuildContext ctx, SurvivorState s) {
+    void _contextOnHookTap(BuildContext ctx, SurvivorState s) {
         final state = ctx.findAncestorStateOfType<_DbDKillerHelperAppState>();
-        state!._onTimerTap(s);
+        state!._onHookTap(s);
     }
 
     void _contextIncHook(BuildContext ctx, SurvivorState s, int delta) {
