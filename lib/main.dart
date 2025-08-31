@@ -165,7 +165,7 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
             ),
             home: Scaffold(
                 appBar: AppBar(
-                    title: const Text('キラー用：サバイバー毎の単一タイマー'),
+                    title: const Text('キラー用：縦リスト / 各行は横並び（自動スケール）'),
                     actions: [
                         IconButton(
                             tooltip: '全てリセット',
@@ -178,110 +178,176 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
                         ),
                     ],
                 ),
-                body: ListView.separated(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: survivors.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 12),
-                    itemBuilder: (_, i) {
-                        final s = survivors[i];
-                        final progress = s.timer.running
-                            ? (s.timer.elapsed.clamp(0, s.timer.maxSeconds) / s.timer.maxSeconds)
-                            : 0.0;
-                        final timeText = _fmt(s.timer.elapsed % (s.timer.maxSeconds + 1));
-                        return Card(
-                            elevation: 2,
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                            child: Padding(
-                                padding: const EdgeInsets.all(12),
-                                child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                                    children: [
-                                        // 上部：円形プログレス＋時間表示
-                                        Center(
-                                            child: SizedBox(
-                                                width: 180,
-                                                height: 180,
-                                                child: Stack(
-                                                    alignment: Alignment.center,
-                                                    children: [
-                                                        SizedBox(
-                                                            width: 160,
-                                                            height: 160,
-                                                            child: CircularProgressIndicator(
-                                                                value: progress,
-                                                                strokeWidth: 10,
-                                                            ),
-                                                        ),
-                                                        Text(
-                                                            timeText,
-                                                            style: const TextStyle(fontSize: 34, fontWeight: FontWeight.w700),
-                                                        ),
-                                                        Positioned(
-                                                            right: 0,
-                                                            top: 0,
-                                                            child: IconButton(
-                                                                tooltip: 'このサバイバーをリセット',
-                                                                icon: const Icon(Icons.stop_circle_outlined),
-                                                                onPressed: () => setState(s.timer.stopAndReset),
-                                                            ),
-                                                        ),
-                                                    ],
-                                                ),
-                                            ),
-                                        ),
-                                        const SizedBox(height: 12),
-                                        // 下部：3つのパーク画像（タップで開始/停止、長押しで彩度トグル）
-                                        Wrap(
-                                            alignment: WrapAlignment.center,
-                                            spacing: 16,
-                                            runSpacing: 16,
-                                            children: perkCatalog.map((p) {
-                                                final sat = _saturationFor(s, p.id);
-                                                final selected = p.id == s.selectedPerkId;
-                                                return GestureDetector(
-                                                    onTap: () => _onPerkTap(s, p.id),
-                                                    onLongPress: () => _onPerkLongPress(s, p.id),
-                                                    child: AnimatedContainer(
-                                                        duration: const Duration(milliseconds: 120),
-                                                        padding: const EdgeInsets.all(8),
-                                                        decoration: BoxDecoration(
-                                                            borderRadius: BorderRadius.circular(14),
-                                                            border: Border.all(
-                                                                color: selected
-                                                                    ? Theme.of(context).colorScheme.primary
-                                                                    : Theme.of(context).colorScheme.outlineVariant,
-                                                                width: selected ? 2 : 1,
-                                                            ),
-                                                        ),
-                                                        child: ColorFiltered(
-                                                            colorFilter: ColorFilter.matrix(_saturationMatrix(sat)),
-                                                            child: SizedBox(
-                                                                width: 80,
-                                                                height: 80,
-                                                                child: Image.asset(
-                                                                    p.path,
-                                                                    fit: BoxFit.contain,
-                                                                    errorBuilder: (ctx, err, st) => Container(
-                                                                        alignment: Alignment.center,
-                                                                        color: Colors.black12,
-                                                                        child: const Text('Set image', style: TextStyle(fontSize: 12)),
-                                                                    ),
-                                                                ),
-                                                            ),
-                                                        ),
-                                                    ),
-                                                );
-                                            }).toList(),
-                                        ),
-                                        const SizedBox(height: 6),
-                                    ],
-                                ),
+                body: LayoutBuilder(
+                    builder: (context, constraints) {
+                        // 画面サイズから自動スケール計算
+                        const rows = 4;
+                        const vSpacing = 8.0;
+                        final maxW = constraints.maxWidth;
+                        final maxH = constraints.maxHeight;
+
+                        final totalVSpacing = vSpacing * (rows - 1);
+                        final tileH = ((maxH - totalVSpacing) / rows).clamp(72.0, 220.0);
+
+                        // 行内レイアウト計算
+                        final timerSize = (tileH * 0.9).clamp(64.0, 140.0);
+                        final gap = 12.0;
+                        final rightW = (maxW - timerSize - gap - 24).clamp(120.0, maxW);
+                        final perkSize = (
+                            ((rightW - (gap * 2)) / 3)
+                        ).clamp(40.0, tileH * 0.7);
+
+                        // 4行が収まるならスクロール無し、難しければスクロール可
+                        final contentH = tileH * rows + totalVSpacing;
+                        final physics = contentH <= maxH
+                            ? const NeverScrollableScrollPhysics()
+                            : const BouncingScrollPhysics();
+
+                        return ListView.separated(
+                            padding: const EdgeInsets.all(8),
+                            physics: physics,
+                            itemCount: survivors.length,
+                            separatorBuilder: (_, __) => const SizedBox(height: vSpacing),
+                            itemBuilder: (_, i) => _SurvivorRow(
+                                state: survivors[i],
+                                perkCatalog: perkCatalog,
+                                timerSize: timerSize,
+                                perkSize: perkSize,
+                                horizontalGap: gap,
                             ),
                         );
                     },
                 ),
             ),
         );
+    }
+}
+
+class _SurvivorRow extends StatelessWidget {
+    final SurvivorState state;
+    final List<PerkAsset> perkCatalog;
+    final double timerSize;
+    final double perkSize;
+    final double horizontalGap;
+
+    const _SurvivorRow({
+        required this.state,
+        required this.perkCatalog,
+        required this.timerSize,
+        required this.perkSize,
+        required this.horizontalGap,
+    });
+
+    @override
+    Widget build(BuildContext context) {
+        final progress = state.timer.running
+            ? (state.timer.elapsed.clamp(0, state.timer.maxSeconds) / state.timer.maxSeconds)
+            : 0.0;
+        final timeText = _fmt(state.timer.elapsed % (state.timer.maxSeconds + 1));
+        final stroke = (timerSize * 0.09).clamp(6.0, 10.0);
+        final fontSize = (timerSize * 0.23).clamp(16.0, 28.0);
+
+        return Card(
+            elevation: 2,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                        // 左：コンパクトタイマー（円＋時間）
+                        SizedBox(
+                            width: timerSize,
+                            height: timerSize,
+                            child: Stack(
+                                alignment: Alignment.center,
+                                children: [
+                                    CircularProgressIndicator(
+                                        value: progress,
+                                        strokeWidth: stroke,
+                                    ),
+                                    Text(
+                                        timeText,
+                                        style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w700),
+                                    ),
+                                    Positioned(
+                                        right: -4,
+                                        top: -4,
+                                        child: IconButton(
+                                            tooltip: 'このサバイバーをリセット',
+                                            icon: const Icon(Icons.stop_circle_outlined, size: 20),
+                                            onPressed: () {
+                                                state.timer.stopAndReset();
+                                            },
+                                        ),
+                                    ),
+                                ],
+                            ),
+                        ),
+                        SizedBox(width: horizontalGap),
+                        // 右：パーク画像3つを横並び
+                        Expanded(
+                            child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                                children: perkCatalog.map((p) {
+                                    final sat = _contextSaturation(context, state, p.id);
+                                    final selected = p.id == state.selectedPerkId;
+                                    return GestureDetector(
+                                        onTap: () => _contextOnTap(context, state, p.id),
+                                        onLongPress: () => _contextOnLongPress(context, state, p.id),
+                                        child: AnimatedContainer(
+                                            duration: const Duration(milliseconds: 120),
+                                            padding: const EdgeInsets.all(4),
+                                            decoration: BoxDecoration(
+                                                borderRadius: BorderRadius.circular(12),
+                                                border: Border.all(
+                                                    color: selected
+                                                        ? Theme.of(context).colorScheme.primary
+                                                        : Theme.of(context).colorScheme.outlineVariant,
+                                                    width: selected ? 2 : 1,
+                                                ),
+                                            ),
+                                            child: ColorFiltered(
+                                                colorFilter: ColorFilter.matrix(_saturationMatrix(sat)),
+                                                child: SizedBox(
+                                                    width: perkSize,
+                                                    height: perkSize,
+                                                    child: Image.asset(
+                                                        p.path,
+                                                        fit: BoxFit.contain,
+                                                        errorBuilder: (ctx, err, st) => Container(
+                                                            alignment: Alignment.center,
+                                                            color: Colors.black12,
+                                                            child: const Text('Set image', style: TextStyle(fontSize: 10)),
+                                                        ),
+                                                    ),
+                                                ),
+                                            ),
+                                        ),
+                                    );
+                                }).toList(),
+                            ),
+                        ),
+                    ],
+                ),
+            ),
+        );
+    }
+
+    // 以下はコンテキスト経由で親Stateの関数にアクセスする簡易ヘルパ
+    double _contextSaturation(BuildContext ctx, SurvivorState s, String id) {
+        final state = ctx.findAncestorStateOfType<_DbDKillerHelperAppState>();
+        return state!._saturationFor(s, id);
+    }
+
+    void _contextOnTap(BuildContext ctx, SurvivorState s, String id) {
+        final state = ctx.findAncestorStateOfType<_DbDKillerHelperAppState>();
+        state!._onPerkTap(s, id);
+    }
+
+    void _contextOnLongPress(BuildContext ctx, SurvivorState s, String id) {
+        final state = ctx.findAncestorStateOfType<_DbDKillerHelperAppState>();
+        state!._onPerkLongPress(s, id);
     }
 }
 
