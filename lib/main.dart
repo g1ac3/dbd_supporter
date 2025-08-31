@@ -70,6 +70,8 @@ class SurvivorState {
     final SingleCounterTimer timer = SingleCounterTimer();
     String selectedPerkId = 'ds';
     final Map<String, bool> desaturated = {'ds': false, 'otr': false, 'dh': false};
+
+    int hookCount = 0; // 0..3 の範囲
 }
 
 List<double> _saturationMatrix(double s) {
@@ -133,15 +135,29 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
         SystemSound.play(SystemSoundType.click);
     }
 
-    void _onPerkTap(SurvivorState s, String id) {
+    // タイマー自体をタップして開始/停止。開始時に hookCount を自動で +1（最大3）。
+    void _onTimerTap(SurvivorState s) {
         setState(() {
-            s.selectedPerkId = id;
-            // ワンタップ：停止中→0から開始 / 実行中→停止して0へ
             if (!s.timer.running) {
+                s.hookCount = (s.hookCount + 1).clamp(0, 3);
                 s.timer.startFromZero();
             } else {
                 s.timer.stopAndReset();
             }
+        });
+    }
+
+    // 手動で釣り回数を増減
+    void _incHook(SurvivorState s, int delta) {
+        setState(() {
+            s.hookCount = (s.hookCount + delta).clamp(0, 3);
+        });
+    }
+
+    void _onPerkTap(SurvivorState s, String id) {
+        // 仕様変更：タイマーは開始しない。選択や彩度だけ扱う。
+        setState(() {
+            s.selectedPerkId = id;
         });
     }
 
@@ -165,10 +181,10 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
             ),
             home: Scaffold(
                 appBar: AppBar(
-                    title: const Text('キラー用：縦リスト / 各行は横並び（オーバーフロー対策）'),
+                    title: const Text('キラー用：縦リスト / タイマー直接タップ & 釣り回数(0..3)'),
                     actions: [
                         IconButton(
-                            tooltip: '全てリセット',
+                            tooltip: '全タイマーリセット',
                             onPressed: () => setState(() {
                                 for (final s in survivors) {
                                     s.timer.stopAndReset();
@@ -189,12 +205,12 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
                         final totalVSpacing = vSpacing * (rows - 1);
                         final tileH = ((maxH - totalVSpacing) / rows).clamp(72.0, 220.0);
 
-                        // 行内の基準サイズ（以前より小さめ）
+                        // 行内の基準サイズ
                         final timerSize = (tileH * 0.75).clamp(56.0, 120.0);
                         final perkSize = (tileH * 0.42).clamp(36.0, 72.0);
-                        final gap = 8.0; // タイマーとパークの間
+                        final gap = 8.0; // タイマーとパーク群の間
 
-                        // 4行が収まるならスクロール無し、難しければスクロール可
+                        // 4行が収まるならスクロール無し、難しければスクロール有り
                         final contentH = tileH * rows + totalVSpacing;
                         final physics = contentH <= maxH
                             ? const NeverScrollableScrollPhysics()
@@ -252,44 +268,79 @@ class _SurvivorRow extends StatelessWidget {
                 child: Row(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                        // 左：タイマー（必要に応じて縮小して収める）
+                        // 左：タイマー（タップで開始/停止）＋ 釣り回数コントロール
                         Flexible(
-                            flex: 4,
+                            flex: 5,
                             child: FittedBox(
                                 fit: BoxFit.scaleDown,
                                 alignment: Alignment.centerLeft,
-                                child: SizedBox(
-                                    width: timerSize,
-                                    height: timerSize,
-                                    child: Stack(
-                                        alignment: Alignment.center,
-                                        children: [
-                                            CircularProgressIndicator(
-                                                value: progress,
-                                                strokeWidth: stroke,
-                                            ),
-                                            Text(
-                                                timeText,
-                                                style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w700),
-                                            ),
-                                            Positioned(
-                                                right: 0,
-                                                top: 0,
-                                                child: IconButton(
-                                                    tooltip: 'このサバイバーをリセット',
-                                                    icon: const Icon(Icons.stop_circle_outlined, size: 18),
-                                                    onPressed: () {
-                                                        state.timer.stopAndReset();
-                                                    },
+                                child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                        GestureDetector(
+                                            onTap: () => _contextOnTimerTap(context, state),
+                                            child: SizedBox(
+                                                width: timerSize,
+                                                height: timerSize,
+                                                child: Stack(
+                                                    alignment: Alignment.center,
+                                                    children: [
+                                                        CircularProgressIndicator(
+                                                            value: progress,
+                                                            strokeWidth: stroke,
+                                                        ),
+                                                        Text(
+                                                            timeText,
+                                                            style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w700),
+                                                        ),
+                                                        Positioned(
+                                                            right: 0,
+                                                            top: 0,
+                                                            child: IconButton(
+                                                                tooltip: 'このサバイバーのタイマーをリセット',
+                                                                icon: const Icon(Icons.stop_circle_outlined, size: 18),
+                                                                onPressed: () {
+                                                                    state.timer.stopAndReset();
+                                                                },
+                                                            ),
+                                                        ),
+                                                    ],
                                                 ),
                                             ),
-                                        ],
-                                    ),
+                                        ),
+                                        const SizedBox(height: 6),
+                                        // 釣り回数（0..3）
+                                        Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                                _miniIconButton(
+                                                    context,
+                                                    icon: Icons.remove,
+                                                    onPressed: () => _contextIncHook(context, state, -1),
+                                                    enabled: state.hookCount > 0,
+                                                ),
+                                                Container(
+                                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                                    decoration: BoxDecoration(
+                                                        color: Theme.of(context).colorScheme.surfaceVariant,
+                                                        borderRadius: BorderRadius.circular(8),
+                                                    ),
+                                                    child: Text('${state.hookCount}/3', style: const TextStyle(fontWeight: FontWeight.w600)),
+                                                ),
+                                                _miniIconButton(
+                                                    context,
+                                                    icon: Icons.add,
+                                                    onPressed: () => _contextIncHook(context, state, 1),
+                                                    enabled: state.hookCount < 3,
+                                                ),
+                                            ],
+                                        )
+                                    ],
                                 ),
                             ),
                         ),
                         SizedBox(width: horizontalGap),
-                        // 右：パーク画像3つを横並び（不足時は自動縮小して収める）
+                        // 右：パーク画像3つを横並び
                         Flexible(
                             flex: 6,
                             child: FittedBox(
@@ -303,8 +354,8 @@ class _SurvivorRow extends StatelessWidget {
                                         return Padding(
                                             padding: const EdgeInsets.symmetric(horizontal: 4),
                                             child: GestureDetector(
-                                                onTap: () => _contextOnTap(context, state, p.id),
-                                                onLongPress: () => _contextOnLongPress(context, state, p.id),
+                                                onTap: () => _contextOnPerkTap(context, state, p.id),
+                                                onLongPress: () => _contextOnPerkLongPress(context, state, p.id),
                                                 child: AnimatedContainer(
                                                     duration: const Duration(milliseconds: 120),
                                                     padding: const EdgeInsets.all(4),
@@ -346,20 +397,46 @@ class _SurvivorRow extends StatelessWidget {
         );
     }
 
+    Widget _miniIconButton(BuildContext context, {required IconData icon, required VoidCallback onPressed, bool enabled = true}) {
+        return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: IconButton(
+                onPressed: enabled ? onPressed : null,
+                icon: Icon(icon, size: 18),
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints.tightFor(width: 32, height: 32),
+                style: IconButton.styleFrom(
+                    foregroundColor: Theme.of(context).colorScheme.onSurface,
+                ),
+            ),
+        );
+    }
+
     // 親Stateの関数にアクセスする簡易ヘルパ
     double _contextSaturation(BuildContext ctx, SurvivorState s, String id) {
         final state = ctx.findAncestorStateOfType<_DbDKillerHelperAppState>();
         return state!._saturationFor(s, id);
     }
 
-    void _contextOnTap(BuildContext ctx, SurvivorState s, String id) {
+    void _contextOnPerkTap(BuildContext ctx, SurvivorState s, String id) {
         final state = ctx.findAncestorStateOfType<_DbDKillerHelperAppState>();
         state!._onPerkTap(s, id);
     }
 
-    void _contextOnLongPress(BuildContext ctx, SurvivorState s, String id) {
+    void _contextOnPerkLongPress(BuildContext ctx, SurvivorState s, String id) {
         final state = ctx.findAncestorStateOfType<_DbDKillerHelperAppState>();
         state!._onPerkLongPress(s, id);
+    }
+
+    void _contextOnTimerTap(BuildContext ctx, SurvivorState s) {
+        final state = ctx.findAncestorStateOfType<_DbDKillerHelperAppState>();
+        state!._onTimerTap(s);
+    }
+
+    void _contextIncHook(BuildContext ctx, SurvivorState s, int delta) {
+        final state = ctx.findAncestorStateOfType<_DbDKillerHelperAppState>();
+        state!._incHook(s, delta);
     }
 }
 
