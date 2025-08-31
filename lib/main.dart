@@ -311,37 +311,54 @@ class _SurvivorRow extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                 child: LayoutBuilder(
                     builder: (context, box) {
-                        // ---- 横幅に応じた自動スケール（比率固定） ----
+                        // ---- 2-axis fit (width & height), ratio preserved ----
                         final availW = box.maxWidth;
-                        // タイマー:パークの相対比（パーク=タイマーの約0.58倍）
-                        const ratioPerkToTimer = 0.58;
-                        // 行高に基づく基準サイズ
-                        final timerBase = (tileHeight * 0.72).clamp(52.0, 112.0);
-                        final perkBase  = timerBase * ratioPerkToTimer;
-                        // パディング/枠の概算
-                        const iconGap = 6.0;       // パーク間の隙間（×2発生）
-                        const perIconExtra = 8.0;  // パーク枠内のpadding+border概算
-                        final requiredW = timerBase
-                            + horizontalGap
-                            + 3 * (perkBase + perIconExtra)
-                            + 2 * iconGap;
 
-                        final scale = (availW / requiredW).clamp(0.6, 1.0);
-                        final timerSize = timerBase * scale;
-                        final perkSize  = perkBase  * scale;
+                        // Make timer relatively smaller: increase perk/timer ratio a bit
+                        const ratioPerkToTimer = 0.66; // was 0.58
 
-                        // 表示用
+                        // Vertical layout constants (match list builder assumptions)
+                        const hookRowH = 24.0;
+                        const betweenPerkAndHook = 4.0;
+
+                        // Horizontal spacing estimates
+                        const iconGap = 6.0;       // gap between perk icons (twice)
+                        const perIconExtra = 10.0;
+                        const trailingEdgeEpsilon = 2.0;// padding+border per perk container
+
+                        // Base desired size from row height
+                        final baseTimerByHeight = (tileHeight * 0.68).clamp(44.0, 112.0);
+
+                        // Height limits: timer must fit tileHeight; perk must fit (tileHeight - hook - gap)
+                        final maxPerkByHeight = (tileHeight - hookRowH - betweenPerkAndHook).clamp(24.0, tileHeight);
+                        final heightLimitTimer = [tileHeight, maxPerkByHeight / ratioPerkToTimer].reduce((a, b) => a < b ? a : b);
+
+                        // Width limit: timer + gap + 3 * (perk + extras) must fit availW
+                        final widthLimitTimer = (availW - horizontalGap - 3 * (perIconExtra) - 2 * iconGap) / (1 + 3 * ratioPerkToTimer);
+
+                        // Choose the minimum of base desire, width, and height constraints
+                        double timerSize = baseTimerByHeight;
+                        if (heightLimitTimer < timerSize) timerSize = heightLimitTimer;
+                        if (widthLimitTimer < timerSize) timerSize = widthLimitTimer;
+                        if (!(timerSize.isFinite) || timerSize <= 0) {
+                            timerSize = 40.0; // fallback
+                        }
+                        // Enforce sensible bounds
+                        timerSize = timerSize.clamp(36.0, 120.0);
+                        final perkSize  = (timerSize * ratioPerkToTimer).clamp(24.0, 96.0);
+
+                        // Rendering parameters
                         final progress = state.timer.running
                             ? (state.timer.elapsed.clamp(0, state.timer.maxSeconds) / state.timer.maxSeconds)
                             : 0.0;
                         final timeText = _fmt(state.timer.elapsed % (state.timer.maxSeconds + 1));
-                        final stroke   = (timerSize * 0.09).clamp(4.5, 8.0);
-                        final fontSize = (timerSize * 0.23).clamp(13.0, 24.0);
+                        final stroke   = (timerSize * 0.09).clamp(4.0, 8.0);
+                        final fontSize = (timerSize * 0.23).clamp(12.0, 24.0);
 
                         return Row(
                             crossAxisAlignment: CrossAxisAlignment.center,
                             children: [
-                                // 左: タイマー（タップで開始/停止）
+                                // 左：タイマー（タップで開始/停止）
                                 SizedBox(
                                     width: timerSize,
                                     height: timerSize,
@@ -363,12 +380,13 @@ class _SurvivorRow extends StatelessWidget {
                                     ),
                                 ),
                                 SizedBox(width: horizontalGap),
-                                // 右: パーク3つ + 下に釣りカウンタ
+                                // 右：パーク3つ（横一列）＋ 下に釣りカウンタ
                                 Expanded(
                                     child: Column(
                                         mainAxisAlignment: MainAxisAlignment.center,
                                         crossAxisAlignment: CrossAxisAlignment.stretch,
                                         children: [
+                                            // 上段：パーク
                                             Row(
                                                 mainAxisAlignment: MainAxisAlignment.center,
                                                 mainAxisSize: MainAxisSize.max,
@@ -379,7 +397,8 @@ class _SurvivorRow extends StatelessWidget {
                                                     ],
                                                 ],
                                             ),
-                                            const SizedBox(height: 4),
+                                            SizedBox(height: betweenPerkAndHook),
+                                            // 下段：釣りカウンタ（中央寄せ）
                                             Row(
                                                 mainAxisAlignment: MainAxisAlignment.center,
                                                 children: [
@@ -410,7 +429,7 @@ class _SurvivorRow extends StatelessWidget {
                                 ),
                             ],
                         );
-                    },
+},
                 ),
             ),
         );
