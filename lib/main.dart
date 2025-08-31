@@ -19,7 +19,7 @@ class SingleCounterTimer {
     bool _notified60 = false;
     bool _notified80 = false;
 
-    SingleCounterTimer({this.maxSeconds = 81, this.notifyAt = const [60, 80]});
+    SingleCounterTimer({this.maxSeconds = 99*60+59, this.notifyAt = const [60, 80]});
 
     void startFromZero() {
         running = true;
@@ -43,18 +43,13 @@ class SingleCounterTimer {
         final now = DateTime.now();
         elapsed = now.difference(_startedAt!).inSeconds;
 
-        if (!_notified60 && notifyAt.contains(60) && elapsed >= 60 && elapsed < maxSeconds) {
+        if (!_notified60 && notifyAt.contains(60) && elapsed >= 60) {
             _notified60 = true;
             onNotify60();
         }
         if (!_notified80 && notifyAt.contains(80) && elapsed >= 80) {
             _notified80 = true;
             onNotify80();
-            // 自動リセット
-            stopAndReset();
-        }
-        if (elapsed > maxSeconds) {
-            stopAndReset();
         }
     }
 }
@@ -195,7 +190,7 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
     void _onStartPressed() {
         setState(() {
             for (final s in survivors) {
-                s.timer.stopAndReset();
+                s.timer.startFromZero();
                 s.hookCount = 0;
                 for (final id in ['ds','otr','dh']) {
                     s.perkStates[id] = PerkState.unknown;
@@ -211,7 +206,7 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
         setState(() {
             if (!s.isHooked) {
                 // Become hooked now
-                s.timer.stopAndReset();
+                s.timer.startFromZero();
                 s.hookCount = (s.hookCount + 1).clamp(0, 3);
             } else {
                 // Unhooked now
@@ -418,7 +413,7 @@ class _SurvivorRow extends StatelessWidget {
 
                         // Rendering parameters
                         final progress = state.timer.running
-                            ? (state.timer.elapsed.clamp(0, state.timer.maxSeconds) / state.timer.maxSeconds)
+                            ? (state.timer.elapsed.clamp(0, 80) / 80)
                             : 0.0;
                         final timeText = _fmt(state.timer.elapsed % (state.timer.maxSeconds + 1));
                         final stroke   = (timerSize * 0.09).clamp(4.0, 8.0);
