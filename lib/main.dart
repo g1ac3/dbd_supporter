@@ -19,7 +19,7 @@ class SingleCounterTimer {
     bool _notified60 = false;
     bool _notified80 = false;
 
-    SingleCounterTimer({this.maxSeconds = 80, this.notifyAt = const [60, 80]});
+    SingleCounterTimer({this.maxSeconds = 81, this.notifyAt = const [60, 80]});
 
     void startFromZero() {
         running = true;
@@ -90,10 +90,20 @@ class PerkAsset {
     const PerkAsset(this.id, this.label, this.path);
 }
 
+
+enum PerkState { unknown, ready, inactive, spent }
+
 class SurvivorState {
     final SingleCounterTimer timer = SingleCounterTimer();
-    String selectedPerkId = 'ds';
-    final Map<String, bool> desaturated = {'ds': false, 'otr': false, 'dh': false};
+    // Perk state machine per perk id
+    final Map<String, PerkState> perkStates = {
+        'ds': PerkState.unknown,
+        'otr': PerkState.unknown,
+        'dh': PerkState.unknown,
+    };
+
+    // Previous elapsed seconds to detect 60s/80s crossings
+    int _prevElapsed = 0;
 
     int hookCount = 0; // 0..3 の範囲
     bool isHooked = false;
@@ -137,8 +147,27 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
         // 全タイマーを定期再計算。
         ticker = Timer.periodic(const Duration(milliseconds: 250), (_) {
             for (final s in survivors) {
+            final prev = s._prevElapsed;
                 s.timer.recompute(onNotify60: _notifyAt60, onNotify80: _notifyAt80);
+            final cur = s.timer.elapsed;
+
+            // 60s crossing
+            if (prev < 60 && cur >= 60) {
+                // DS expires -> spent; DH cooldown -> ready
+                if ((s.perkStates['ds'] ?? PerkState.unknown) == PerkState.ready) {
+                    s.perkStates['ds'] = PerkState.spent;
+                }
             }
+            // 80s crossing
+            if (prev < 79 && cur >= 79) {
+                // OTR expires -> spent
+                if ((s.perkStates['otr'] ?? PerkState.unknown) == PerkState.ready) {
+                    s.perkStates['otr'] = PerkState.spent;
+                }
+            }
+            s._prevElapsed = cur;
+        }
+
             gameTimer.recompute();
             if (mounted) setState(() {});
         });
@@ -168,8 +197,9 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
             for (final s in survivors) {
                 s.timer.stopAndReset();
                 s.hookCount = 0;
-                s.selectedPerkId = 'ds';
-                s.desaturated.updateAll((_, __) => false);
+                for (final id in ['ds','otr','dh']) {
+                    s.perkStates[id] = PerkState.unknown;
+                }
             }
             gameTimer.startFromZero();
             HapticFeedback.lightImpact();
@@ -180,12 +210,23 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
     void _onHookTap(SurvivorState s) {
         setState(() {
             if (!s.isHooked) {
+                // Become hooked now
                 s.timer.stopAndReset();
                 s.hookCount = (s.hookCount + 1).clamp(0, 3);
             } else {
+                // Unhooked now
                 s.timer.startFromZero();
+                // UNHOOK event transitions -> ready (for DS/OTR); DH also ready
+                for (final id in ['ds','otr','dh']) {
+                    if (s.perkStates[id] == PerkState.spent) {
+                        continue;
+                    }
+                    s.perkStates[id] = PerkState.ready;
+                }
             }
             s.isHooked = !s.isHooked;
+            // reset time crossing tracking
+            s._prevElapsed = 0;
         });
     }
 
@@ -197,19 +238,42 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
     }
 
     void _onPerkTap(SurvivorState s, String id) {
-        // タイマーは開始しない。選択や彩度だけ扱う。
+        // Single tap: "use" if the perk requires activation (e.g., DS/DH).
         setState(() {
-            s.selectedPerkId = id;
+            final st = s.perkStates[id] ?? PerkState.unknown;
+            switch (id) {
+                case 'dh':
+                    if (st == PerkState.ready) {
+                        s.perkStates[id] = PerkState.inactive;
+                    }
+                    break;
+                case 'ds': // Decisive Strike:
+                case 'otr': // Off The Record:
+                    if (st == PerkState.ready) {
+                        s.perkStates[id] = PerkState.inactive;
+                    }
+                    break;
+                default:
+                    break;
+            }
         });
     }
 
-    void _onPerkLongPress(SurvivorState s, String id) {
-        setState(() => s.desaturated[id] = !(s.desaturated[id] ?? false));
+    void _onPerkDoubleTap(SurvivorState s, String id) {
+        // Double tap: toggle Ready <-> spent (manual override/disable)
+        setState(() {
+            final st = s.perkStates[id] ?? PerkState.unknown;
+            if (st == PerkState.spent) {
+                s.perkStates[id] = PerkState.ready;
+            } else {
+                s.perkStates[id] = PerkState.spent;
+            }
+        });
     }
 
     double _saturationFor(SurvivorState s, String id) {
-        if (s.desaturated[id] == true) return 0.0;
-        return id == s.selectedPerkId ? 1.0 : 0.35;
+        if (s.perkStates[id] == PerkState.ready) return 1.0;
+        return 0.3;
     }
 
     @override
@@ -455,18 +519,31 @@ class _SurvivorRow extends StatelessWidget {
     }
 
     Widget _perkIcon(BuildContext context, PerkAsset p, double perkSize) {
-        final selected = p.id == state.selectedPerkId;
+        final isThisPerkReady = (state.perkStates[p.id] == PerkState.ready);
         final sat = _contextSaturation(context, state, p.id);
+        String? perkStateOverlayAsset(PerkState s, String perkId) {
+        // 画像は /assets/perks/status/ 配下に配置される想定
+        // 例: unknown.png / spent.png （Perk別に用意する場合は perkId を使って分岐）
+            switch (s) {
+                case PerkState.unknown:
+                    return 'assets/perks/status/unknown.png';
+                case PerkState.spent:
+                    return 'assets/perks/status/spent.png';
+                default:
+                    return null;
+            }
+        }
+
         return GestureDetector(
             onTap: () => _contextOnPerkTap(context, state, p.id),
-            onLongPress: () => _contextOnPerkLongPress(context, state, p.id),
+            onDoubleTap: () => _contextOnPerkDoubleTap(context, state, p.id),
             child: Container(
                 padding: const EdgeInsets.all(3),
                 decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(10),
                     border: Border.all(
-                        color: selected ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.outlineVariant,
-                        width: selected ? 2 : 1,
+                        color: isThisPerkReady ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.outlineVariant,
+                        width: isThisPerkReady ? 2 : 1,
                     ),
                 ),
                 child: ColorFiltered(
@@ -474,17 +551,44 @@ class _SurvivorRow extends StatelessWidget {
                     child: SizedBox(
                         width: perkSize,
                         height: perkSize,
-                        child: Image.asset(
-                            p.path,
-                            fit: BoxFit.contain,
-                            errorBuilder: (ctx, err, st) => Container(
-                                alignment: Alignment.center,
-                                color: Colors.black12,
-                                child: const Text('Set image', style: TextStyle(fontSize: 10)),
-                            ),
+                        child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                                // Base perk image
+                                Image.asset(
+                                    p.path,
+                                    fit: BoxFit.contain,
+                                    errorBuilder: (ctx, err, st) => Container(
+                                        alignment: Alignment.center,
+                                        color: Colors.black12,
+                                        child: const Text('Set image', style: TextStyle(fontSize: 10)),
+                                    ),
+                                ),
+                                // Status overlay (unknown/spent)
+                                Builder(
+                                    builder: (ctx) {
+                                        final st = state.perkStates[p.id] ?? PerkState.unknown;
+                                        final overlay = perkStateOverlayAsset(st, p.id);
+                                        if (overlay == null) return const SizedBox.shrink();
+                                        return IgnorePointer(
+                                            ignoring: true,
+                                            child: Center(
+                                                child: Image.asset(
+                                                    overlay,
+                                                    fit: BoxFit.contain,
+                                                    width: perkSize * 0.9,
+                                                    height: perkSize * 0.9,
+                                                    errorBuilder: (ctx, err, st) => const SizedBox.shrink(),
+                                                ),
+                                            ),
+                                        );
+                                    },
+                                ),
+                            ],
                         ),
                     ),
                 ),
+
             ),
         );
     }
@@ -516,9 +620,9 @@ class _SurvivorRow extends StatelessWidget {
         state!._onPerkTap(s, id);
     }
 
-    void _contextOnPerkLongPress(BuildContext ctx, SurvivorState s, String id) {
+    void _contextOnPerkDoubleTap(BuildContext ctx, SurvivorState s, String id) {
         final state = ctx.findAncestorStateOfType<_DbDKillerHelperAppState>();
-        state!._onPerkLongPress(s, id);
+        state!._onPerkDoubleTap(s, id);
     }
 
     void _contextOnHookTap(BuildContext ctx, SurvivorState s) {
