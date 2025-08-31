@@ -59,6 +59,30 @@ class SingleCounterTimer {
     }
 }
 
+/// 試合全体用のゲームタイマー（STARTで0からカウントアップ）
+class GameTimer {
+    bool running = false;
+    int elapsed = 0; // 秒
+    DateTime? _startedAt;
+
+    void startFromZero() {
+        running = true;
+        elapsed = 0;
+        _startedAt = DateTime.now();
+    }
+
+    void stopAndReset() {
+        running = false;
+        elapsed = 0;
+        _startedAt = null;
+    }
+
+    void recompute() {
+        if (!running || _startedAt == null) return;
+        elapsed = DateTime.now().difference(_startedAt!).inSeconds;
+    }
+}
+
 class PerkAsset {
     final String id;      // 'ds' | 'otr' | 'dh'
     final String label;   // 表示用（必要なら）
@@ -102,17 +126,19 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
     ];
 
     late final List<SurvivorState> survivors;
+    final GameTimer gameTimer = GameTimer();
     Timer? ticker;
 
     @override
     void initState() {
         super.initState();
         survivors = List.generate(4, (_) => SurvivorState());
-        // 全サバイバーのタイマーを定期再計算。
+        // 全タイマーを定期再計算。
         ticker = Timer.periodic(const Duration(milliseconds: 250), (_) {
             for (final s in survivors) {
                 s.timer.recompute(onNotify60: _notifyAt60, onNotify80: _notifyAt80);
             }
+            gameTimer.recompute();
             if (mounted) setState(() {});
         });
     }
@@ -135,6 +161,20 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
         SystemSound.play(SystemSoundType.click);
     }
 
+    // START ボタン：全サバイバー情報をリセットし、ゲームタイマーを0から開始
+    void _onStartPressed() {
+        setState(() {
+            for (final s in survivors) {
+                s.timer.stopAndReset();
+                s.hookCount = 0;
+                s.selectedPerkId = 'ds';
+                s.desaturated.updateAll((_, __) => false);
+            }
+            gameTimer.startFromZero();
+            HapticFeedback.lightImpact();
+        });
+    }
+
     // タイマー自体をタップして開始/停止。開始時に hookCount を自動で +1（最大3）。
     void _onTimerTap(SurvivorState s) {
         setState(() {
@@ -155,7 +195,7 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
     }
 
     void _onPerkTap(SurvivorState s, String id) {
-        // 仕様変更：タイマーは開始しない。選択や彩度だけ扱う。
+        // タイマーは開始しない。選択や彩度だけ扱う。
         setState(() {
             s.selectedPerkId = id;
         });
@@ -181,18 +221,27 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
             ),
             home: Scaffold(
                 appBar: AppBar(
-                    title: const Text('キラー用：縦リスト / タイマー直接タップ & 釣り回数(0..3)'),
-                    actions: [
-                        IconButton(
-                            tooltip: '全タイマーリセット',
-                            onPressed: () => setState(() {
-                                for (final s in survivors) {
-                                    s.timer.stopAndReset();
-                                }
-                            }),
-                            icon: const Icon(Icons.restore),
-                        ),
-                    ],
+                    titleSpacing: 8,
+                    title: Row(
+                        children: [
+                            FilledButton(
+                                onPressed: _onStartPressed,
+                                style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10)),
+                                child: const Text('START', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                            ),
+                            const SizedBox(width: 12),
+                            const Icon(Icons.timer_outlined, size: 20),
+                            const SizedBox(width: 6),
+                            // ゲームタイマーの表示
+                            AnimatedBuilder(
+                                animation: Listenable.merge(const []),
+                                builder: (_, __) => Text(
+                                    _fmt(gameTimer.elapsed),
+                                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
+                                ),
+                            ),
+                        ],
+                    ),
                 ),
                 body: LayoutBuilder(
                     builder: (context, constraints) {
@@ -208,9 +257,8 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
                         // 行内の基準サイズ
                         final timerSize = (tileH * 0.75).clamp(56.0, 120.0);
                         final perkSize = (tileH * 0.42).clamp(36.0, 72.0);
-                        final gap = 8.0; // タイマーとパーク群の間
+                        final gap = 8.0;
 
-                        // 4行が収まるならスクロール無し、難しければスクロール有り
                         final contentH = tileH * rows + totalVSpacing;
                         final physics = contentH <= maxH
                             ? const NeverScrollableScrollPhysics()
@@ -292,17 +340,6 @@ class _SurvivorRow extends StatelessWidget {
                                                         Text(
                                                             timeText,
                                                             style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w700),
-                                                        ),
-                                                        Positioned(
-                                                            right: 0,
-                                                            top: 0,
-                                                            child: IconButton(
-                                                                tooltip: 'このサバイバーのタイマーをリセット',
-                                                                icon: const Icon(Icons.stop_circle_outlined, size: 18),
-                                                                onPressed: () {
-                                                                    state.timer.stopAndReset();
-                                                                },
-                                                            ),
                                                         ),
                                                     ],
                                                 ),
