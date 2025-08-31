@@ -226,55 +226,60 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
                         children: [
                             FilledButton(
                                 onPressed: _onStartPressed,
-                                style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10)),
-                                child: const Text('START', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700)),
+                                style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), minimumSize: const Size(0, 40)),
+                                child: const Text('START', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
                             ),
-                            const SizedBox(width: 12),
-                            const Icon(Icons.timer_outlined, size: 20),
+                            const SizedBox(width: 10),
+                            const Icon(Icons.timer_outlined, size: 18),
                             const SizedBox(width: 6),
-                            // ゲームタイマーの表示
-                            AnimatedBuilder(
-                                animation: Listenable.merge(const []),
-                                builder: (_, __) => Text(
-                                    _fmt(gameTimer.elapsed),
-                                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700),
-                                ),
+                            Text(
+                                _fmt(gameTimer.elapsed),
+                                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
                             ),
                         ],
                     ),
                 ),
                 body: LayoutBuilder(
                     builder: (context, constraints) {
-                        // 画面サイズから自動スケール計算
+                        // 画面サイズから自動スケール計算（縦方向に確実に収まるように再設計）
                         const rows = 4;
-                        const vSpacing = 8.0;
-                        final maxW = constraints.maxWidth;
+                        const vSpacing = 6.0;           // 行間を少し詰める
+                        const listPadV = 12.0;          // ListView 上下余白
+                        const extraPerTile = 12.0;      // カード内の上下パディング総量の概算
                         final maxH = constraints.maxHeight;
 
-                        final totalVSpacing = vSpacing * (rows - 1);
-                        final tileH = ((maxH - totalVSpacing) / rows).clamp(72.0, 220.0);
+                        // 実高さに近い見積もりで1行の高さを決める
+                        final availableForTiles = maxH - listPadV * 2 - vSpacing * (rows - 1);
+                        double tileH = (availableForTiles / rows) - (extraPerTile / rows);
+                        tileH = tileH.clamp(64.0, 200.0);
 
-                        // 行内の基準サイズ
-                        final timerSize = (tileH * 0.75).clamp(56.0, 120.0);
-                        final perkSize = (tileH * 0.42).clamp(36.0, 72.0);
-                        final gap = 8.0;
+                        // 行内の基準サイズ（右側が2段構成：パーク列＋釣りカウンタ）
+                        const hookRowH = 24.0;          // 釣りカウンタ行の目標高さ
+                        const betweenPerkAndHook = 4.0; // パークとカウンタの間
+                        final perkSize = (tileH - hookRowH - betweenPerkAndHook).clamp(30.0, 70.0);
+                        final timerSize = (tileH * 0.72).clamp(52.0, 112.0);
+                        const gap = 8.0;
 
-                        final contentH = tileH * rows + totalVSpacing;
+                        // 実コンテンツ高さを再計算して、スクロール可否を決める
+                        final contentH = rows * (tileH + extraPerTile) + vSpacing * (rows - 1) + listPadV * 2;
                         final physics = contentH <= maxH
                             ? const NeverScrollableScrollPhysics()
                             : const BouncingScrollPhysics();
 
                         return ListView.separated(
-                            padding: const EdgeInsets.all(8),
+                            padding: const EdgeInsets.symmetric(vertical: listPadV, horizontal: 8),
                             physics: physics,
                             itemCount: survivors.length,
                             separatorBuilder: (_, __) => const SizedBox(height: vSpacing),
-                            itemBuilder: (_, i) => _SurvivorRow(
-                                state: survivors[i],
-                                perkCatalog: perkCatalog,
-                                timerSize: timerSize,
-                                perkSize: perkSize,
-                                horizontalGap: gap,
+                            itemBuilder: (_, i) => SizedBox(
+                                height: tileH, // 1行の高さを固定して間延びを抑制
+                                child: _SurvivorRow(
+                                    state: survivors[i],
+                                    perkCatalog: perkCatalog,
+                                    timerSize: timerSize,
+                                    perkSize: perkSize,
+                                    horizontalGap: gap,
+                                ),
                             ),
                         );
                     },
@@ -305,99 +310,59 @@ class _SurvivorRow extends StatelessWidget {
             ? (state.timer.elapsed.clamp(0, state.timer.maxSeconds) / state.timer.maxSeconds)
             : 0.0;
         final timeText = _fmt(state.timer.elapsed % (state.timer.maxSeconds + 1));
-        final stroke = (timerSize * 0.09).clamp(5.0, 9.0);
-        final fontSize = (timerSize * 0.23).clamp(14.0, 26.0);
+        final stroke = (timerSize * 0.09).clamp(4.5, 8.0);
+        final fontSize = (timerSize * 0.23).clamp(13.0, 24.0);
 
         return Card(
-            elevation: 2,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            elevation: 1,
+            margin: EdgeInsets.zero,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
             child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                 child: Row(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                        // 左：タイマー（タップで開始/停止）＋ 釣り回数コントロール
-                        Flexible(
-                            flex: 5,
-                            child: FittedBox(
-                                fit: BoxFit.scaleDown,
-                                alignment: Alignment.centerLeft,
-                                child: Column(
-                                    mainAxisSize: MainAxisSize.min,
+                        // 左：タイマー（タップで開始/停止）
+                        SizedBox(
+                            width: timerSize,
+                            height: timerSize,
+                            child: GestureDetector(
+                                onTap: () => _contextOnTimerTap(context, state),
+                                child: Stack(
+                                    alignment: Alignment.center,
                                     children: [
-                                        GestureDetector(
-                                            onTap: () => _contextOnTimerTap(context, state),
-                                            child: SizedBox(
-                                                width: timerSize,
-                                                height: timerSize,
-                                                child: Stack(
-                                                    alignment: Alignment.center,
-                                                    children: [
-                                                        CircularProgressIndicator(
-                                                            value: progress,
-                                                            strokeWidth: stroke,
-                                                        ),
-                                                        Text(
-                                                            timeText,
-                                                            style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w700),
-                                                        ),
-                                                    ],
-                                                ),
-                                            ),
+                                        CircularProgressIndicator(
+                                            value: progress,
+                                            strokeWidth: stroke,
                                         ),
-                                        const SizedBox(height: 6),
-                                        // 釣り回数（0..3）
-                                        Row(
-                                            mainAxisSize: MainAxisSize.min,
-                                            children: [
-                                                _miniIconButton(
-                                                    context,
-                                                    icon: Icons.remove,
-                                                    onPressed: () => _contextIncHook(context, state, -1),
-                                                    enabled: state.hookCount > 0,
-                                                ),
-                                                Container(
-                                                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                                                    decoration: BoxDecoration(
-                                                        color: Theme.of(context).colorScheme.surfaceVariant,
-                                                        borderRadius: BorderRadius.circular(8),
-                                                    ),
-                                                    child: Text('${state.hookCount}/3', style: const TextStyle(fontWeight: FontWeight.w600)),
-                                                ),
-                                                _miniIconButton(
-                                                    context,
-                                                    icon: Icons.add,
-                                                    onPressed: () => _contextIncHook(context, state, 1),
-                                                    enabled: state.hookCount < 3,
-                                                ),
-                                            ],
-                                        )
+                                        Text(
+                                            timeText,
+                                            style: TextStyle(fontSize: fontSize, fontWeight: FontWeight.w700),
+                                        ),
                                     ],
                                 ),
                             ),
                         ),
                         SizedBox(width: horizontalGap),
-                        // 右：パーク画像3つを横並び
-                        Flexible(
-                            flex: 6,
-                            child: FittedBox(
-                                fit: BoxFit.scaleDown,
-                                alignment: Alignment.centerLeft,
-                                child: Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: perkCatalog.map((p) {
-                                        final sat = _contextSaturation(context, state, p.id);
-                                        final selected = p.id == state.selectedPerkId;
-                                        return Padding(
-                                            padding: const EdgeInsets.symmetric(horizontal: 4),
-                                            child: GestureDetector(
+                        // 右：パーク3つ（横一列）＋ 下に釣りカウンタ
+                        Expanded(
+                            child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                    // 上段：パーク
+                                    Row(
+                                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                                        children: perkCatalog.map((p) {
+                                            final selected = p.id == state.selectedPerkId;
+                                            final sat = _contextSaturation(context, state, p.id);
+                                            return GestureDetector(
                                                 onTap: () => _contextOnPerkTap(context, state, p.id),
                                                 onLongPress: () => _contextOnPerkLongPress(context, state, p.id),
-                                                child: AnimatedContainer(
-                                                    duration: const Duration(milliseconds: 120),
-                                                    padding: const EdgeInsets.all(4),
+                                                child: Container(
+                                                    padding: const EdgeInsets.all(3),
                                                     decoration: BoxDecoration(
-                                                        borderRadius: BorderRadius.circular(12),
+                                                        borderRadius: BorderRadius.circular(10),
                                                         border: Border.all(
                                                             color: selected
                                                                 ? Theme.of(context).colorScheme.primary
@@ -422,10 +387,37 @@ class _SurvivorRow extends StatelessWidget {
                                                         ),
                                                     ),
                                                 ),
+                                            );
+                                        }).toList(),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    // 下段：釣りカウンタ（中央寄せ）
+                                    Row(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                            _miniIconButton(
+                                                context,
+                                                icon: Icons.remove,
+                                                onPressed: () => _contextIncHook(context, state, -1),
+                                                enabled: state.hookCount > 0,
                                             ),
-                                        );
-                                    }).toList(),
-                                ),
+                                            Container(
+                                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                                decoration: BoxDecoration(
+                                                    color: Theme.of(context).colorScheme.surfaceVariant,
+                                                    borderRadius: BorderRadius.circular(6),
+                                                ),
+                                                child: Text('${state.hookCount}/3', style: const TextStyle(fontWeight: FontWeight.w600)),
+                                            ),
+                                            _miniIconButton(
+                                                context,
+                                                icon: Icons.add,
+                                                onPressed: () => _contextIncHook(context, state, 1),
+                                                enabled: state.hookCount < 3,
+                                            ),
+                                        ],
+                                    ),
+                                ],
                             ),
                         ),
                     ],
@@ -439,10 +431,10 @@ class _SurvivorRow extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 4),
             child: IconButton(
                 onPressed: enabled ? onPressed : null,
-                icon: Icon(icon, size: 18),
+                icon: Icon(icon, size: 16),
                 visualDensity: VisualDensity.compact,
                 padding: EdgeInsets.zero,
-                constraints: const BoxConstraints.tightFor(width: 32, height: 32),
+                constraints: const BoxConstraints.tightFor(width: 28, height: 28),
                 style: IconButton.styleFrom(
                     foregroundColor: Theme.of(context).colorScheme.onSurface,
                 ),
