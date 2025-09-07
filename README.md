@@ -5,10 +5,13 @@ DBD Supporter helps you improve your Dead by Daylight gameplay by visualizing in
 ### for killer
 - timer that measures the time since being unhooked
 - management for key suvivors' perks (decisive strike, off the record and dead hard)
+### for survivor
+- nothing
 ## future
-- add app images to README
-- 
+- write README
+  - add app images
+  - add how to use this app
 ### for killer
-- no idea
+- fix UI and flow of "perk management". 
 ### for survivor
 - no idea
