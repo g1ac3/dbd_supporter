@@ -79,28 +79,52 @@ class GameTimer {
 }
 
 class PerkAsset {
-    final String id;      // 'ds' | 'otr' | 'dh'
-    final String label;   // 表示用（必要なら）
-    final String path;    // 画像アセットのパス（ユーザーが設定）
-    const PerkAsset(this.id, this.label, this.path);
+    final String name;
+    final String perkImagePath;
+    const PerkAsset(this.name, this.perkImagePath);
 }
 
 
-enum PerkState { unknown, ready, inactive, spent }
+enum PerkOwnership {
+    unknown,
+    notOwned,
+    owned,
+}
+
+class PerkState {
+    bool isAvailable;
+    PerkOwnership ownership;
+    bool isSpent;
+
+    PerkState({
+        required this.isAvailable,
+        required this.ownership,
+        required this.isSpent,
+    });
+
+    factory PerkState.initial() {
+        return PerkState(
+            isAvailable: false,
+            ownership: PerkOwnership.unknown,
+            isSpent: false,
+        );
+    }
+}
+
+final List<String> allPerksList = const['Decisive-Strike',
+                                        'Off-the-Record',
+                                        'Dead-Hard',
+                                        ];
 
 class SurvivorState {
     final SingleCounterTimer timer = SingleCounterTimer();
-    // Perk state machine per perk id
     final Map<String, PerkState> perkStates = {
-        'ds': PerkState.unknown,
-        'otr': PerkState.unknown,
-        'dh': PerkState.unknown,
+        for (final perkName in allPerksList)
+            perkName: PerkState.initial(),
     };
+    int _prevElapsedSec = 0;
 
-    // Previous elapsed seconds to detect 60s/80s crossings
-    int _prevElapsed = 0;
-
-    int hookCount = 0; // 0..3 の範囲
+    int hookCount = 0;
     bool isHooked = false;
 }
 
@@ -124,11 +148,10 @@ class DbDKillerHelperApp extends StatefulWidget {
 }
 
 class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
-    // 画像パスはあなたが用意。pubspec.yaml の assets に登録してください。
     final List<PerkAsset> perkCatalog = const [
-        PerkAsset('ds',  'Decisive Strike', 'assets/perks/ds.png'),
-        PerkAsset('otr', 'Off The Record',  'assets/perks/otr.png'),
-        PerkAsset('dh',  'Dead Hard',       'assets/perks/dh.png'),
+        PerkAsset('Decisive-Strike', 'assets/perks/ds.png'),
+        PerkAsset('Off-the-Record',  'assets/perks/otr.png'),
+        PerkAsset('Dead-Hard',       'assets/perks/dh.png'),
     ];
 
     late final List<SurvivorState> survivors;
@@ -139,28 +162,22 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
     void initState() {
         super.initState();
         survivors = List.generate(4, (_) => SurvivorState());
-        // 全タイマーを定期再計算。
         ticker = Timer.periodic(const Duration(milliseconds: 250), (_) {
-            for (final s in survivors) {
-            final prev = s._prevElapsed;
+        for (final s in survivors) {
+            final prev = s._prevElapsedSec;
                 s.timer.recompute(onNotify60: _notifyAt60, onNotify80: _notifyAt80);
             final cur = s.timer.elapsed;
 
             // 60s crossing
             if (prev < 60 && cur >= 60) {
-                // DS expires -> spent; DH cooldown -> ready
-                if ((s.perkStates['ds'] ?? PerkState.unknown) == PerkState.ready) {
-                    s.perkStates['ds'] = PerkState.unknown;
-                }
+                s.perkStates['Decisive-Strike']?.isAvailable = false;
             }
+
             // 80s crossing
-            if (prev < 79 && cur >= 79) {
-                // OTR expires -> spent
-                if ((s.perkStates['otr'] ?? PerkState.unknown) == PerkState.ready) {
-                    s.perkStates['otr'] = PerkState.unknown;
-                }
+            if (prev < 80 && cur >= 80) {
+                s.perkStates['Off-the-Record']?.isAvailable = false;
             }
-            s._prevElapsed = cur;
+            s._prevElapsedSec = cur;
         }
 
             gameTimer.recompute();
@@ -177,23 +194,25 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
     void _notifyAt60() async {
         HapticFeedback.mediumImpact();
         SystemSound.play(SystemSoundType.click);
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+        SystemSound.play(SystemSoundType.click);
     }
 
     void _notifyAt80() async {
-        HapticFeedback.heavyImpact();
+        HapticFeedback.mediumImpact();
         SystemSound.play(SystemSoundType.click);
         await Future<void>.delayed(const Duration(milliseconds: 120));
         SystemSound.play(SystemSoundType.click);
     }
 
-    // START ボタン：全サバイバー情報をリセットし、ゲームタイマーを0から開始
     void _onStartPressed() {
         setState(() {
             for (final s in survivors) {
                 s.timer.startFromZero();
                 s.hookCount = 0;
-                for (final id in ['ds','otr','dh']) {
-                    s.perkStates[id] = PerkState.unknown;
+                /* TODO: add "ishooked reset" */
+                for (final perkName in allPerksList) {
+                    s.perkStates[perkName] = PerkState.initial();
                 }
             }
             gameTimer.startFromZero();
@@ -201,27 +220,21 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
         });
     }
 
-    // タイマー自体をタップして開始/停止。開始時に hookCount を自動で +1（最大3）。
+    /* TODO: add description*/
     void _onHookTap(SurvivorState s) {
         setState(() {
+            s.timer.startFromZero();
             if (!s.isHooked) {
                 // Become hooked now
-                s.timer.startFromZero();
                 s.hookCount = (s.hookCount + 1).clamp(0, 3);
             } else {
                 // Unhooked now
-                s.timer.startFromZero();
-                // UNHOOK event transitions -> ready (for DS/OTR); DH also ready
-                for (final id in ['ds','otr','dh']) {
-                    if (s.perkStates[id] == PerkState.spent) {
-                        continue;
-                    }
-                    s.perkStates[id] = PerkState.ready;
+                for (final perkName in allPerksList) {
+                    s.perkStates[perkName]?.isAvailable = true;
                 }
             }
             s.isHooked = !s.isHooked;
-            // reset time crossing tracking
-            s._prevElapsed = 0;
+            s._prevElapsedSec = 0;
         });
     }
 
@@ -232,42 +245,42 @@ class _DbDKillerHelperAppState extends State<DbDKillerHelperApp> {
         });
     }
 
-    void _onPerkTap(SurvivorState s, String id) {
-        // Single tap: "use" if the perk requires activation (e.g., DS/DH).
+    void _onPerkTap(SurvivorState s, String perkName) {
         setState(() {
-            final st = s.perkStates[id] ?? PerkState.unknown;
-            switch (id) {
-                case 'dh':
-                    if (st == PerkState.ready) {
-                        s.perkStates[id] = PerkState.inactive;
+            switch (perkName) {
+                case 'Decisive-Strike':
+                    s.perkStates[perkName]!.isSpent = !(s.perkStates[perkName]!.isSpent);
+                default: //Off-The-Record, Dead-Hard
+                    final current = s.perkStates[perkName]?.ownership;
+                    if (current != null) {
+                        final values = PerkOwnership.values;
+                        final nextIndex = (current.index + 1) % values.length;
+                        s.perkStates[perkName]!.ownership = values[nextIndex];
                     }
-                    break;
-                case 'ds': // Decisive Strike:
-                case 'otr': // Off The Record:
-                    if (st == PerkState.ready) {
-                        s.perkStates[id] = PerkState.inactive;
-                    }
-                    break;
-                default:
                     break;
             }
         });
     }
 
-    void _onPerkDoubleTap(SurvivorState s, String id) {
-        // Double tap: toggle Ready <-> spent (manual override/disable)
+    void _onPerkDoubleTap(SurvivorState s, String perkName) {
         setState(() {
-            final st = s.perkStates[id] ?? PerkState.unknown;
-            if (st == PerkState.spent) {
-                s.perkStates[id] = PerkState.ready;
-            } else {
-                s.perkStates[id] = PerkState.spent;
+            switch (perkName) {
+                case 'Decisive-Strike':
+                    break;
+                default: //Off-The-Record, Dead-Hard
+                    final current = s.perkStates[perkName]?.ownership;
+                    if (current != null) {
+                        final values = PerkOwnership.values;
+                        final nextIndex = (current.index - 1 + values.length) % values.length;
+                        s.perkStates[perkName]!.ownership = values[nextIndex];
+                    }
+                    break;
             }
         });
     }
 
-    double _saturationFor(SurvivorState s, String id) {
-        if (s.perkStates[id] == PerkState.ready) return 1.0;
+    double _saturationFor(SurvivorState s, String perkName) {
+        //if (s.perkStates[perkName]?.availability == PerkState.ready) return 1.0;
         return 0.3;
     }
 
@@ -514,31 +527,33 @@ class _SurvivorRow extends StatelessWidget {
     }
 
     Widget _perkIcon(BuildContext context, PerkAsset p, double perkSize) {
-        final isThisPerkReady = (state.perkStates[p.id] == PerkState.ready);
-        final sat = _contextSaturation(context, state, p.id);
-        String? perkStateOverlayAsset(PerkState s, String perkId) {
-        // 画像は /assets/perks/status/ 配下に配置される想定
-        // 例: unknown.png / spent.png （Perk別に用意する場合は perkId を使って分岐）
-            switch (s) {
-                case PerkState.unknown:
+        final isThisPerkAvailable = state.perkStates[p.name]?.isAvailable ?? false;
+        //final sat = _contextSaturation(context, state, p.name);
+        final sat = isThisPerkAvailable ? 1.0 : 0.3;
+        String? perkStateOverlayAsset(PerkState parkState, String perkId) {
+            if (parkState.isSpent) {
+                return 'assets/perks/status/spent.png';
+            }
+            switch (parkState.ownership) {
+                case PerkOwnership.unknown:
                     return 'assets/perks/status/unknown.png';
-                case PerkState.spent:
-                    return 'assets/perks/status/spent.png';
-                default:
-                    return null;
+                case PerkOwnership.notOwned:
+                    return 'assets/perks/status/notOwned.png';
+                case PerkOwnership.owned:
+                    return 'assets/perks/status/owned.png';
             }
         }
 
         return GestureDetector(
-            onTap: () => _contextOnPerkTap(context, state, p.id),
-            onDoubleTap: () => _contextOnPerkDoubleTap(context, state, p.id),
+            onTap: () => _contextOnPerkTap(context, state, p.name),
+            onDoubleTap: () => _contextOnPerkDoubleTap(context, state, p.name),
             child: Container(
                 padding: const EdgeInsets.all(3),
                 decoration: BoxDecoration(
                     borderRadius: BorderRadius.circular(10),
                     border: Border.all(
-                        color: isThisPerkReady ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.outlineVariant,
-                        width: isThisPerkReady ? 2 : 1,
+                        color: isThisPerkAvailable ? Theme.of(context).colorScheme.primary : Theme.of(context).colorScheme.outlineVariant,
+                        width: isThisPerkAvailable ? 2 : 1,
                     ),
                 ),
                 child: ColorFiltered(
@@ -551,7 +566,7 @@ class _SurvivorRow extends StatelessWidget {
                             children: [
                                 // Base perk image
                                 Image.asset(
-                                    p.path,
+                                    p.perkImagePath,
                                     fit: BoxFit.contain,
                                     errorBuilder: (ctx, err, st) => Container(
                                         alignment: Alignment.center,
@@ -562,8 +577,8 @@ class _SurvivorRow extends StatelessWidget {
                                 // Status overlay (unknown/spent)
                                 Builder(
                                     builder: (ctx) {
-                                        final st = state.perkStates[p.id] ?? PerkState.unknown;
-                                        final overlay = perkStateOverlayAsset(st, p.id);
+                                        final st = state.perkStates[p.name] ?? PerkState.initial();
+                                        final overlay = perkStateOverlayAsset(st, p.name);
                                         if (overlay == null) return const SizedBox.shrink();
                                         return IgnorePointer(
                                             ignoring: true,
