@@ -1,4 +1,5 @@
 # dbd_supporter
+!! Development halted due to the implementation of unhook timing is not visible and the hook counter in the game. !!\
 DBD Supporter helps you improve your Dead by Daylight gameplay by visualizing information about the opposing side. It does not connect to the game or read any in-game data; all inputs are manual.
 
 ## supported features
